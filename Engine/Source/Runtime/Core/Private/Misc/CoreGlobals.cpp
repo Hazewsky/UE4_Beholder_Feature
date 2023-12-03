@@ -200,6 +200,9 @@ bool					GIsRequestingExit				= false;					/* Indicates that MainLoop() should b
 /** Archive for serializing arbitrary data to and from memory												*/
 bool					GAreScreenMessagesEnabled		= true;						/* Whether onscreen warnings/messages are enabled */
 bool					GScreenMessagesRestoreState		= false;					/* Used to restore state after a screenshot */
+bool					GIsHighResStandaloneBufferDump		= false;					/* Whether we're capturing a high resolution buffer dump */
+uint32					GVisualizationDumpResolutionX	= 0;						/* X Resolution for high res dumps */
+uint32					GVisualizationDumpResolutionY	= 0;						/* Y Resolution for high res dumps */
 int32					GIsDumpingMovie					= 0;						/* Whether we are dumping screenshots (!= 0), exposed as console variable r.DumpingMovie */
 bool					GIsHighResScreenshot			= false;					/* Whether we're capturing a high resolution shot */
 uint32					GScreenshotResolutionX			= 0;						/* X Resolution for high res shots */

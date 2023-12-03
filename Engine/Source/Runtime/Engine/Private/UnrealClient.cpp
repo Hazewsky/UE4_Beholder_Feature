@@ -276,6 +276,7 @@ FUnorderedAccessViewRHIRef FRenderTarget::GetRenderTargetUAV() const
 	return FUnorderedAccessViewRHIRef();
 }
 
+
 void FScreenshotRequest::RequestScreenshot(bool bInShowUI)
 {
 	// empty string means we'll later pick the name
@@ -325,7 +326,6 @@ void FScreenshotRequest::RequestScreenshot(const FString& InFilename, bool bInSh
 	}
 }
 
-
 void FScreenshotRequest::Reset()
 {
 	bIsScreenshotRequested = false;
@@ -371,6 +371,54 @@ TArray<FColor>* FScreenshotRequest::GetHighresScreenshotMaskColorArray()
 	return &HighresScreenshotMaskColorArray;
 }
 
+void FStandaloneBufferDumpRequest::RequestStandaloneBufferDump(const FString& InFilename, bool bAddUniqueSuffix)
+{
+	FString GeneratedFilename = InFilename;
+	CreateViewportStandaloneBufferDumpFilename(GeneratedFilename);
+
+	if (bAddUniqueSuffix)
+	{
+		const bool bRemovePath = false;
+		GeneratedFilename = FPaths::GetBaseFilename(GeneratedFilename, bRemovePath);
+		FFileHelper::GenerateDateTimeBasedBitmapFilename(GeneratedFilename, TEXT("png"), Filename);
+	}
+	else
+	{
+		Filename = GeneratedFilename;
+		if (FPaths::GetExtension(Filename).Len() == 0)
+		{
+			Filename += TEXT(".png");
+		}
+	}
+
+	// Register the screenshot
+	if (!Filename.IsEmpty())
+	{
+		bIsStandaloneBufferDumpRequested = true;
+	}
+
+	GScreenMessagesRestoreState = GAreScreenMessagesEnabled;
+}
+
+void FStandaloneBufferDumpRequest::Reset()
+{
+	bIsStandaloneBufferDumpRequested = false;
+	Filename.Empty();
+}
+
+void FStandaloneBufferDumpRequest::CreateViewportStandaloneBufferDumpFilename(FString& InOutFilename)
+{
+	FString TypeName = TEXT("StandaloneBufferDump");
+
+	check(!TypeName.IsEmpty());
+
+	//default to using the path that is given
+	InOutFilename = TypeName;
+	if (!TypeName.Contains(TEXT("/")))
+	{
+		InOutFilename = GetDefault<UEngine>()->GameScreenshotSaveDirectory.Path / TypeName;
+	}
+}
 
 // @param bAutoType true: automatically choose GB/MB/KB/... false: always use MB for easier comparisons
 FString GetMemoryString( const double Value, const bool bAutoType )
@@ -402,6 +450,12 @@ FString FScreenshotRequest::Filename;
 FString FScreenshotRequest::NextScreenshotName;
 bool FScreenshotRequest::bShowUI = false;
 TArray<FColor> FScreenshotRequest::HighresScreenshotMaskColorArray;
+
+FOnBufferDumpRequestProcessed FStandaloneBufferDumpRequest::BufferDumpProcessedDelegate;
+FOnBufferDumpCaptured FStandaloneBufferDumpRequest::BufferDumpCapturedDelegate;
+bool FStandaloneBufferDumpRequest::bIsStandaloneBufferDumpRequested = false;
+FString FStandaloneBufferDumpRequest::Filename;
+FString FStandaloneBufferDumpRequest::NextBufferDumpName;
 
 static TAutoConsoleVariable<int32> CVarFullSizeUnitGraph(
 	TEXT("FullSizeUnitGraph"),
@@ -1162,7 +1216,8 @@ FViewport::FViewport(FViewportClient* InViewportClient):
 	bIsSlateViewport(false),
 	bIsHDR(false),
 	ViewportType(NAME_None),
-	bTakeHighResScreenShot(false)
+	bTakeHighResScreenShot(false),
+	bTakeHighResBufferDump(false)
 {
 	//initialize the hit proxy kernel
 	HitProxySize = 5;
@@ -1188,6 +1243,50 @@ FViewport::FViewport(FViewportClient* InViewportClient):
 
 FViewport::~FViewport()
 {
+}
+
+bool FViewport::TakeHighResGBufferDump()
+{
+	if (GVisualizationDumpResolutionX == 0 && GVisualizationDumpResolutionY == 0)
+	{
+		GVisualizationDumpResolutionX = SizeX * GetHighResScreenshotConfig().ResolutionMultiplier;
+		GVisualizationDumpResolutionY = SizeY * GetHighResScreenshotConfig().ResolutionMultiplier;
+	}
+
+	uint32 MaxTextureDimension = GetMax2DTextureDimension();
+
+	// Check that we can actually create a destination texture of this size
+	if (GVisualizationDumpResolutionX > MaxTextureDimension || GVisualizationDumpResolutionY > MaxTextureDimension)
+	{
+		// Send a notification to tell the user the screenshot has failed
+		auto Message = NSLOCTEXT("UnrealClient", "HighResDumpTooBig", "The high resolution buffer dump multiplier is too large for your system. Please try again with a smaller value!");
+		FNotificationInfo Info(Message);
+		Info.bFireAndForget = true;
+		Info.ExpireDuration = 5.0f;
+		Info.bUseSuccessFailIcons = false;
+		Info.bUseLargeFont = false;
+		FSlateNotificationManager::Get().AddNotification(Info);
+
+		UE_LOG(LogClient, Warning, TEXT("The specified multiplier for high resolution buffer dump is too large for your system (requested size %ux%u, max size %ux%u)! Please try again with a smaller value."), GVisualizationDumpResolutionX, GVisualizationDumpResolutionY, MaxTextureDimension, MaxTextureDimension);
+
+		GIsHighResStandaloneBufferDump = false;
+		return false;
+	}
+	else
+	{
+		// Everything is OK. Take the shot.
+		bTakeHighResBufferDump = true;
+
+		//Force a redraw.
+		Invalidate();
+
+		return true;
+	}
+}
+
+bool FViewport::TakeHighResAllGBuffersDump()
+{
+	return true;
 }
 
 bool FViewport::TakeHighResScreenShot()
@@ -1260,6 +1359,169 @@ static void HighResScreenshotEndFrame(FDummyViewport* DummyViewport)
 		RHICmdList.EndFrame();
 		GPU_STATS_ENDFRAME(RHICmdList);
 	});
+}
+
+static void HighResBufferDumpBeginFrame(FDummyViewport* DummyViewport)
+{
+	GFrameCounter++;
+	ENQUEUE_RENDER_COMMAND(BeginFrameCommand)(
+		[DummyViewport, CurrentFrameCounter = GFrameCounter](FRHICommandListImmediate& RHICmdList)
+		{
+			GFrameCounterRenderThread = CurrentFrameCounter;
+			GFrameNumberRenderThread++;
+			GPU_STATS_BEGINFRAME(RHICmdList);
+			RHICmdList.BeginFrame();
+			FCoreDelegates::OnBeginFrameRT.Broadcast();
+			if (DummyViewport)
+			{
+				DummyViewport->BeginRenderFrame(RHICmdList);
+			}
+		});
+}
+
+static void HighResBufferDumpEndFrame(FDummyViewport* DummyViewport)
+{
+	ENQUEUE_RENDER_COMMAND(EndFrameCommand)(
+		[DummyViewport](FRHICommandListImmediate& RHICmdList)
+		{
+			if (DummyViewport)
+			{
+				DummyViewport->EndRenderFrame(RHICmdList, false, false);
+			}
+			FCoreDelegates::OnEndFrameRT.Broadcast();
+			RHICmdList.EndFrame();
+			GPU_STATS_ENDFRAME(RHICmdList);
+		});
+}
+
+void FViewport::HighResBufferDump()
+{
+	if (!ViewportClient->GetEngineShowFlags())
+	{
+		return;
+	}
+
+	// We need to cache this as FScreenshotRequest is a global and the filename is
+	// cleared out before we use it below
+	const FString CachedScreenshotName = FStandaloneBufferDumpRequest::GetFilename();
+
+	FIntPoint RestoreSize(SizeX, SizeY);
+
+	FDummyViewport* DummyViewport = new FDummyViewport(ViewportClient);
+
+	DummyViewport->SizeX = (GVisualizationDumpResolutionX > 0) ? GVisualizationDumpResolutionX : SizeX;
+	DummyViewport->SizeY = (GVisualizationDumpResolutionY > 0) ? GVisualizationDumpResolutionY : SizeY;
+
+	BeginInitResource(DummyViewport);
+
+	// We don't really need all of this since all the work will be done in the buffer visualization data
+	//const auto MotionBlurShowFlagBackup = ViewportClient->GetEngineShowFlags()->MotionBlur;
+	//ViewportClient->GetEngineShowFlags()->SetMotionBlur(false);
+
+	// Forcing 128-bit rendering pipeline
+	//static IConsoleVariable* SceneColorFormatVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SceneColorFormat"));
+	//static IConsoleVariable* PostColorFormatVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PostProcessingColorFormat"));
+	//static IConsoleVariable* ForceLODVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ForceLOD"));
+
+	//check(SceneColorFormatVar && PostColorFormatVar);
+	//const int32 OldSceneColorFormat = SceneColorFormatVar->GetInt();
+	//const int32 OldPostColorFormat = PostColorFormatVar->GetInt();
+	//const int32 OldForceLOD = ForceLODVar ? ForceLODVar->GetInt() : -1;
+
+	//if (GetHighResConfig().bForce128BitRendering)
+	//{
+	//SceneColorFormatVar->Set(5, ECVF_SetByCode);
+	//PostColorFormatVar->Set(1, ECVF_SetByCode);
+	//}
+
+	//if (ForceLODVar)
+	//{
+		// Force highest LOD
+	//	ForceLODVar->Set(0, ECVF_SetByCode);
+	//}
+
+	// Reuse from the screenshot
+	// Render the requested number of frames (at least once)
+	static const auto HighResBufferDumpDelay = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.HighResScreenshotDelay"));
+	const uint32 DefaultBufferDumpDelay = 4;
+	uint32 FrameDelay = HighResBufferDumpDelay ? FMath::Max(HighResBufferDumpDelay->GetValueOnGameThread(), 1) : DefaultBufferDumpDelay;
+
+	// Reuse from the screenshot
+	// 
+	// End the frame that was started before HighResScreenshot() was called. Pass nullptr for the viewport because there's no need to
+	// call EndRenderFrame on the real viewport, as BeginRenderFrame hasn't been called yet.
+	HighResBufferDumpEndFrame(nullptr);
+
+	// Perform run-up.
+	while (FrameDelay)
+	{
+		HighResBufferDumpBeginFrame(DummyViewport);
+
+		FCanvas Canvas(DummyViewport, NULL, ViewportClient->GetWorld(), ViewportClient->GetWorld()->FeatureLevel);
+		{
+			ViewportClient->Draw(DummyViewport, &Canvas);
+		}
+		Canvas.Flush_GameThread();
+
+		// Draw the debug canvas
+		DummyViewport->GetDebugCanvas()->Flush_GameThread(true);
+
+		HighResBufferDumpEndFrame(DummyViewport);
+		
+		FlushRenderingCommands();
+
+		--FrameDelay;
+	}
+
+	//ViewportClient->GetEngineShowFlags()->MotionBlur = MotionBlurShowFlagBackup;
+	//bool bIsBufferDumpsSaved = ViewportClient->ProcessBufferDumps(DummyViewport);
+
+	//SceneColorFormatVar->Set(OldSceneColorFormat, ECVF_SetByCode);
+	//PostColorFormatVar->Set(OldPostColorFormat, ECVF_SetByCode);
+	//if (ForceLODVar)
+	//{
+	//	ForceLODVar->Set(OldForceLOD, ECVF_SetByCode);
+	//}
+
+	ENQUEUE_RENDER_COMMAND(EndDrawingCommand)(
+		[RestoreSize](FRHICommandListImmediate& RHICmdList)
+		{
+			GetRendererModule().SceneRenderTargetsSetBufferSize(RestoreSize.X, RestoreSize.Y);
+		});
+
+	BeginReleaseResource(DummyViewport);
+	FlushRenderingCommands();
+	delete DummyViewport;
+
+	// once the screenshot is done we disable the feature to get only one frame
+	GIsHighResStandaloneBufferDump = false;
+	bTakeHighResBufferDump = false;
+
+	// Notification of a successful screenshot
+	// MOVE TO BUFFER VISUALIZATION
+	/*if ((GIsEditor || !IsFullscreen()) && !GIsAutomationTesting && bIsBufferDumpsSaved)
+	{
+		auto Message = NSLOCTEXT("UnrealClient", "HighResScreenshotSavedAs", "High resolution screenshot saved as");
+		FNotificationInfo Info(Message);
+		Info.bFireAndForget = true;
+		Info.ExpireDuration = 5.0f;
+		Info.bUseSuccessFailIcons = false;
+		Info.bUseLargeFont = false;
+		
+		const FString HyperLinkText = FPaths::ConvertRelativePathToFull(CachedScreenshotName);
+		Info.Hyperlink = FSimpleDelegate::CreateStatic([](FString SourceFilePath) 
+		{
+			FPlatformProcess::ExploreFolder(*(FPaths::GetPath(SourceFilePath)));
+		}, HyperLinkText);
+		Info.HyperlinkText = FText::FromString(HyperLinkText);
+		
+		FSlateNotificationManager::Get().AddNotification(Info);
+		UE_LOG(LogClient, Log, TEXT("%s %s"), *Message.ToString(), *HyperLinkText);
+	}*/
+
+	// Start a new frame for the real viewport. Same as above, pass nullptr because BeginRenderFrame will be called
+	// after this function returns.
+	HighResBufferDumpBeginFrame(nullptr);
 }
 
 void FViewport::HighResScreenshot()
@@ -1538,6 +1800,11 @@ void FViewport::Draw( bool bShouldPresent /*= true */)
 		bool bAnyScreenshotsRequired = FScreenshotRequest::IsScreenshotRequested() || GIsHighResScreenshot || GIsDumpingMovie;
 		bool bBufferVisualizationDumpingRequired = bAnyScreenshotsRequired && CVarDumpFrames && CVarDumpFrames->GetValueOnGameThread();
 
+		// Related to dumps specific
+		static const auto CVarStandaloneDumpFrames = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.StandaloneBufferVisualizationDumpsEnabled"));
+		GIsHighResStandaloneBufferDump = GIsHighResStandaloneBufferDump || bTakeHighResBufferDump;
+		bool bAnyBufferDumpRequired = FStandaloneBufferDumpRequest::IsStandaloneBufferDumpRequested() || GIsHighResStandaloneBufferDump;
+		bool bStandaloneBufferVisualizationDumpingRequired = !bBufferVisualizationDumpingRequired && bAnyBufferDumpRequired && CVarStandaloneDumpFrames && CVarStandaloneDumpFrames->GetValueOnGameThread();
 
 		if(GCaptureCompositionNextFrame)
 		{
@@ -1568,7 +1835,18 @@ void FViewport::Draw( bool bShouldPresent /*= true */)
 				const bool bAddFilenameSuffix = true;
 				FScreenshotRequest::RequestScreenshot( FString(), bShowUI, bAddFilenameSuffix );
 			}
-	
+
+			if (GIsHighResStandaloneBufferDump)
+			{
+				const bool bAddFilenameSuffix = GetHighResStandaloneBufferDumpConfig().FilenameOverride.IsEmpty();
+				FStandaloneBufferDumpRequest::RequestStandaloneBufferDump(FString(), bAddFilenameSuffix);
+				HighResBufferDump();
+			}
+			else if (bAnyBufferDumpRequired)
+			{
+				const bool bAddFilenameSuffix = true;
+				FStandaloneBufferDumpRequest::RequestStandaloneBufferDump(FString(), bAddFilenameSuffix);
+			}
 			if( SizeX > 0 && SizeY > 0 )
 			{
 				static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VSync"));
@@ -2195,6 +2473,78 @@ ENGINE_API bool GetViewportScreenShot(FViewport* Viewport, TArray<FColor>& Bitma
 
 extern bool ParseResolution( const TCHAR* InResolution, uint32& OutX, uint32& OutY, int32& WindowMode );
 
+ENGINE_API bool GetHighResStandaloneBufferDumpInput(const TCHAR* Cmd, FOutputDevice& Ar, uint32& OutXRes, uint32& OutYRes, float& OutResMult, FIntRect& OutCaptureRegion, bool& OutDumpBufferVisualizationTargets, FString& OutFilenameOverride)
+{
+	FString CmdString = Cmd;
+	TArray<FString> Arguments;
+	const FString FilenameSearchString = TEXT("filename=");
+
+	// FParse::Value has better handling of escape characters than FParse::Token
+	FParse::Value(Cmd, *FilenameSearchString, OutFilenameOverride);
+
+	FString Arg;
+	while (FParse::Token(Cmd, Arg, true))
+	{
+		// Now skip filename since we already processed it
+		if (!Arg.StartsWith(FilenameSearchString))
+		{
+			Arguments.Add(Arg);
+		}
+	}
+
+	if (CmdString.Len() > 0)
+	{
+		Arguments.Add(CmdString);
+	}
+
+	int32 NumArguments = Arguments.Num();
+
+	if (NumArguments >= 1)
+	{
+		int32 WindowModeDummy;
+		if (!ParseResolution(*Arguments[0], OutXRes, OutYRes, WindowModeDummy))
+		{
+			//If Cmd is valid and it's not a resolution then the input must be a multiplier.
+			float Mult = FCString::Atof(*Arguments[0]);
+
+			if (Mult > 0.0f && Arguments[0].IsNumeric())
+			{
+				OutResMult = Mult;
+			}
+			else
+			{
+				Ar.Logf(TEXT("Error: Bad input. Input should be in either the form \"HighResShot 1920x1080\" or \"HighResShot 2\""));
+				return false;
+			}
+		}
+		else if (OutXRes <= 0 || OutYRes <= 0)
+		{
+			Ar.Logf(TEXT("Error: Values must be greater than 0 in both dimensions"));
+			return false;
+		}
+		else if (OutXRes > GetMax2DTextureDimension() || OutYRes > GetMax2DTextureDimension())
+		{
+			Ar.Logf(TEXT("Error: Screenshot size exceeds the maximum allowed texture size (%d x %d)"), GetMax2DTextureDimension(), GetMax2DTextureDimension());
+			return false;
+		}
+
+		// Try and extract capture region from string
+		int32 CaptureRegionX = NumArguments > 1 ? FCString::Atoi(*Arguments[1]) : 0;
+		int32 CaptureRegionY = NumArguments > 2 ? FCString::Atoi(*Arguments[2]) : 0;
+		int32 CaptureRegionWidth = NumArguments > 3 ? FCString::Atoi(*Arguments[3]) : 0;
+		int32 CaptureRegionHeight = NumArguments > 4 ? FCString::Atoi(*Arguments[4]) : 0;
+		OutCaptureRegion = FIntRect(CaptureRegionX, CaptureRegionY, CaptureRegionX + CaptureRegionWidth, CaptureRegionY + CaptureRegionHeight);
+		OutDumpBufferVisualizationTargets = NumArguments > 6 ? FCString::Atoi(*Arguments[5]) != 0 : false;
+		return true;
+	}
+	else
+	{
+		Ar.Logf(TEXT("Error: Bad input. Input should be in either the form \"HighResShot 1920x1080\" or \"HighResShot 2\""));
+	}
+
+	return false;
+}
+
 ENGINE_API bool GetHighResScreenShotInput(const TCHAR* Cmd, FOutputDevice& Ar, uint32& OutXRes, uint32& OutYRes, float& OutResMult, FIntRect& OutCaptureRegion, bool& OutShouldEnableMask, bool& OutDumpBufferVisualizationTargets, bool& OutCaptureHDR, FString& OutFilenameOverride, bool& OutUseDateTimeAsFileName)
 {
 	FString CmdString = Cmd;
@@ -2315,7 +2665,7 @@ float FCommonViewportClient::GetDPIDerivedResolutionFraction() const
 	if (GIsEditor)
 	{
 		// When in high res screenshot do not modify screen percentage based on dpi scale
-		if (GIsHighResScreenshot)
+		if (GIsHighResScreenshot || GIsHighResStandaloneBufferDump)
 		{
 			return 1.0f;
 		}

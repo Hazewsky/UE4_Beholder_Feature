@@ -34,6 +34,7 @@ void FLevelViewportCommands::RegisterCommands()
 	UI_COMMAND( ToggleImmersive, "Immersive Mode", "Switches this viewport between immersive mode and regular mode", EUserInterfaceActionType::ToggleButton, PLATFORM_MAC ? FInputChord( EModifierKey::Control, EKeys::F11 ) : FInputChord( EKeys::F11 ) );
 
 	UI_COMMAND( HighResScreenshot, "High Resolution Screenshot...", "Opens the control panel for high resolution screenshots", EUserInterfaceActionType::Button, FInputChord() );
+	UI_COMMAND(ExportAllVisualizeBufferChannels, "Export all g buffer channel data..", "Creates dumps of all G-Buffer channel data", EUserInterfaceActionType::Button, FInputChord());
 	
 	UI_COMMAND( UseDefaultShowFlags, "Use Defaults", "Resets all show flags to default", EUserInterfaceActionType::Button, FInputChord() );
 

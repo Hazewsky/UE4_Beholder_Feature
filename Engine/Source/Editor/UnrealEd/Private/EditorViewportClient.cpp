@@ -5731,6 +5731,57 @@ bool FEditorViewportClient::ProcessScreenShots(FViewport* InViewport)
 	return bIsScreenshotSaved;
 }
 
+bool FEditorViewportClient::ProcessBufferDumps(FViewport* InViewport)
+{
+	bool bIsBufferDumpsSaved = false;
+	return bIsBufferDumpsSaved;
+	if (GIsHighResStandaloneBufferDump)
+	{
+		// Default capture region is the entire viewport
+		FIntRect CaptureRect(0, 0, 0, 0);
+
+		FHighResStandaloneBufferDumpConfig& HighResStandaloneBufferDumpConfig = GetHighResStandaloneBufferDumpConfig();
+
+		// create new capture area()
+
+		bool bCaptureAreaValid = HighResStandaloneBufferDumpConfig.CaptureRegion.Area() > 0;
+
+		if (!ensure(HighResStandaloneBufferDumpConfig.ImageWriteQueue))
+		{
+			return false;
+		}
+
+		// If capture region isn't valid, we need to determine which rectangle to capture from.
+		// We need to calculate a proper view rectangle so that we can take into account camera
+		// properties, such as it being aspect ratio constrained
+		if (!bCaptureAreaValid)
+		{
+			// Screen Percentage is an optimization and should not affect the editor by default, unless we're rendering in stereo
+			bool bUseScreenPercentage = GEngine && GEngine->IsStereoscopic3D(InViewport);
+
+			FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+				InViewport,
+				GetScene(),
+				EngineShowFlags)
+				.SetRealtimeUpdate(IsRealtime())
+				.SetViewModeParam(ViewModeParam, ViewModeParamName));
+
+			ViewFamily.EngineShowFlags.SetScreenPercentage(bUseScreenPercentage);
+
+			auto* ViewportBak = Viewport;
+			Viewport = InViewport;
+			FSceneView* View = CalcSceneView(&ViewFamily);
+			Viewport = ViewportBak;
+			CaptureRect = View->UnscaledViewRect;
+		}
+
+		// Re-enable screen messages - if we are NOT capturing a movie
+		GAreScreenMessagesEnabled = GScreenMessagesRestoreState;
+		InViewport->InvalidateHitProxy();
+	}
+	return true;
+}
+
 void FEditorViewportClient::DrawBoundingBox(FBox &Box, FCanvas* InCanvas, const FSceneView* InView, const FViewport* InViewport, const FLinearColor& InColor, const bool bInDrawBracket, const FString &InLabelText)
 {
 	FVector BoxCenter, BoxExtents;

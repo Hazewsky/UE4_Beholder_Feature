@@ -166,6 +166,20 @@ bool IsVisualizeGBufferDumpToFileEnabled(const FViewInfo& View)
 	return (bFrameDumpRequested && bFrameDumpAllowed);
 }
 
+// Extra::
+bool IsStandaloneVisualizeGBufferDumpToFileEnabled(const FViewInfo& View)
+{
+	static const auto CVarDumpFrameEnabled = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.StandaloneBufferVisualizationDumpsEnabled"));
+
+	const bool bDumpGBuffer = GIsHighResStandaloneBufferDump;
+
+	const bool bFrameDumpAllowed = CVarDumpFrameEnabled->GetValueOnRenderThread() != 0 || bDumpGBuffer;
+
+	const bool bFrameDumpRequested = View.FinalPostProcessSettings.bStandaloneBufferVisualizationDumpRequired;
+
+	return (bFrameDumpRequested && bFrameDumpAllowed);
+}
+
 bool IsVisualizeGBufferDumpToPipeEnabled(const FViewInfo& View)
 {
 	return View.FinalPostProcessSettings.BufferVisualizationPipes.Num() > 0;
@@ -237,6 +251,98 @@ void AddDumpToPipePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, FIma
 	});
 }
 
+void AddStandaloneDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, const FString& Filename, bool bOpenExplorerOnSuccess, bool bExportInCSV)
+{
+	check(Input.IsValid());
+
+	FHighResStandaloneBufferDumpConfig& HighResStandaloneBufferDumpConfig = GetHighResStandaloneBufferDumpConfig();
+
+	if (!ensureMsgf(HighResStandaloneBufferDumpConfig.ImageWriteQueue, TEXT("Unable to write images unless FHighResStandaloneBufferDumpConfig::Init has been called.")))
+	{
+		return;
+	}
+
+	if (GIsHighResStandaloneBufferDump && HighResStandaloneBufferDumpConfig.CaptureRegion.Area())
+	{
+		Input.ViewRect = HighResStandaloneBufferDumpConfig.CaptureRegion;
+	}
+
+	AddReadbackTexturePass(GraphBuilder, RDG_EVENT_NAME("DumpToFile(%s)", Input.Texture->Name), Input.Texture,
+		[&HighResStandaloneBufferDumpConfig, Input, Filename, bOpenExplorerOnSuccess, bExportInCSV](FRHICommandListImmediate& RHICmdList)
+		{
+			TUniquePtr<FImagePixelData> PixelData = ReadbackPixelData(RHICmdList, Input.Texture->GetRHI(), Input.ViewRect);
+
+			if (!PixelData.IsValid())
+			{
+				return;
+			}
+
+			TUniquePtr<FImageWriteTask> ImageTask = MakeUnique<FImageWriteTask>();
+			ImageTask->PixelData = MoveTemp(PixelData);
+
+			HighResStandaloneBufferDumpConfig.PopulateImageTaskParams(*ImageTask);
+			ImageTask->Filename = Filename;
+
+			FString FinalStringCSV = "Index,R,G,B,A\n";
+			if (bExportInCSV)
+			{
+				int64 SizeInBytes;
+				const void* OutRawData = nullptr;
+				ImageTask->PixelData.Get()->GetRawData(OutRawData, SizeInBytes);
+				int64 NumPixels = ImageTask->PixelData->GetSize().X * ImageTask->PixelData->GetSize().Y;
+				const FColor* ColorData = (FColor*)(OutRawData);
+				for (int64 Index = 0; Index < NumPixels; Index++)
+				{
+					uint8 A = ColorData[Index].A;
+					uint8 R = ColorData[Index].R;
+					uint8 G = ColorData[Index].G;
+					uint8 B = ColorData[Index].B;
+					FString string = FString::Printf(TEXT("%d%d,%d,%d,%d\n"), Index, R, G, B, A);
+					FinalStringCSV += string;
+				}
+			}
+			
+
+			if (ImageTask->PixelData->GetType() == EImagePixelType::Color)
+			{
+				// Always write full alpha
+				ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
+
+				if (ImageTask->Format == EImageFormat::EXR)
+				{
+					// Write FColors with a gamma curve. This replicates behavior that previously existed in ExrImageWrapper.cpp (see following overloads) that assumed
+					// any 8 bit output format needed linearizing, but this is not a safe assumption to make at such a low level:
+					// void ExtractAndConvertChannel(const uint8*Src, uint32 SrcChannels, uint32 x, uint32 y, float* ChannelOUT)
+					// void ExtractAndConvertChannel(const uint8*Src, uint32 SrcChannels, uint32 x, uint32 y, FFloat16* ChannelOUT)
+					ImageTask->PixelPreProcessors.Add(TAsyncGammaCorrect<FColor>(2.2f));
+				}
+			}
+
+			FString HyperLinkString = FPaths::ConvertRelativePathToFull(ImageTask->Filename);
+
+			// Define the callback to be called on the main thread when the image has completed
+			// This will be called regardless of whether the write succeeded or not, and will update
+			// the text and completion state of the notification.
+			ImageTask->OnCompleted = [HyperLinkString, bOpenExplorerOnSuccess, bExportInCSV, FinalStringCSV](bool bCompletedSuccessfully)
+			{
+				if (bCompletedSuccessfully)
+				{
+					FString SavePath = FPaths::GetPath(HyperLinkString);
+					if (bExportInCSV)
+					{
+						FFileHelper::SaveStringToFile(FinalStringCSV, *(HyperLinkString + ".csv"));
+					}
+					if (bOpenExplorerOnSuccess)
+					{
+						FPlatformProcess::ExploreFolder(*SavePath);
+					}
+				}
+			};
+
+			HighResStandaloneBufferDumpConfig.ImageWriteQueue->Enqueue(MoveTemp(ImageTask));
+		});
+}
+
 void AddDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, const FString& Filename)
 {
 	check(Input.IsValid());
@@ -283,8 +389,6 @@ void AddDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture Input, cons
 				ImageTask->PixelPreProcessors.Add(TAsyncGammaCorrect<FColor>(2.2f));
 			}
 		}
-
-		HighResScreenshotConfig.ImageWriteQueue->Enqueue(MoveTemp(ImageTask));
 	});
 }
 
@@ -333,7 +437,7 @@ FScreenPassTexture AddVisualizeGBufferOverviewPass(
 	const FFinalPostProcessSettings& PostProcessSettings = View.FinalPostProcessSettings;
 
 	check(Inputs.SceneColor.IsValid());
-	check(Inputs.bDumpToFile || Inputs.bOverview || PostProcessSettings.BufferVisualizationPipes.Num() > 0);
+	check(Inputs.bDumpToFile || Inputs.bStandaloneDumpToFile || Inputs.bOverview || PostProcessSettings.BufferVisualizationPipes.Num() > 0);
 
 	FScreenPassTexture Output;
 	
@@ -377,7 +481,9 @@ FScreenPassTexture AddVisualizeGBufferOverviewPass(
 			AddDumpToPipePass(GraphBuilder, Output, OutputPipe->Get());
 		}
 
-		if (Inputs.bDumpToFile)
+		
+		// we use mostly the same pass for the standalone dump
+		else if (Inputs.bDumpToFile || Inputs.bStandaloneDumpToFile)
 		{
 			// First off, allow the user to specify the pass as a format arg (using {material})
 			TMap<FString, FStringFormatArg> FormatMappings;
@@ -393,7 +499,18 @@ FScreenPassTexture AddVisualizeGBufferOverviewPass(
 
 			MaterialFilename.Append(TEXT(".png"));
 
-			AddDumpToFilePass(GraphBuilder, Output, MaterialFilename);
+			if (Inputs.bDumpToFile)
+			{
+				AddDumpToFilePass(GraphBuilder, Output, MaterialFilename);
+			}
+			else if(Inputs.bStandaloneDumpToFile)
+			{
+				// we only want to open the explorer for the first (or the only) element in the queue
+				int32 Index = PostProcessSettings.BufferVisualizationOverviewMaterials.IndexOfByPredicate([MaterialInterface](const auto& ArrayElement) {
+					return ArrayElement == MaterialInterface;
+					});
+				AddStandaloneDumpToFilePass(GraphBuilder, Output, MaterialFilename, Index == 0, PostProcessSettings.BufferVisualizationOverviewMaterials.Num() == 1);
+			}
 		}
 
 		if (Inputs.bOverview)

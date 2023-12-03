@@ -25,6 +25,7 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Views/SHeaderRow.h"
+#include "Widgets/Layout/SGridPanel.h"
 #include "Framework/Docking/LayoutService.h"
 #include "Styling/CoreStyle.h"
 #include "EditorStyleSet.h"
@@ -263,9 +264,159 @@ void SLevelViewport::ConstructViewportOverlayContent()
 	.HAlign(HAlign_Left)
 	.Padding(5.0f)
 	[
-		SNew(SLevelViewportControlsPopup)
-		.Visibility(this, &SLevelViewport::GetViewportControlsVisibility)
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		[
+			SNew(SLevelViewportControlsPopup)
+			.Visibility(this, &SLevelViewport::GetViewportControlsVisibility)
+		]
 	];
+
+	const int32 MaxTilesX = 4;
+	const int32 MaxTilesY = 4;
+	const float FractionX = 1 / MaxTilesX;
+	const float FractionY = 1 / MaxTilesY;
+
+	ViewportOverlay->AddSlot(SlotIndex)
+		//.VAlign(VAlign_Fill)
+		//.HAlign(HAlign_Fill)	
+	[
+		SAssignNew(OverviewGridPanel, SGridPanel)
+		.FillRow(0, 1)
+		.FillRow(1, 1)
+		.FillRow(2, 1)
+		.FillRow(3, 1)
+		.FillColumn(0, 1)
+		.FillColumn(1, 1)
+		.FillColumn(2, 1)
+		.FillColumn(3, 1)
+		.Visibility(this, &SLevelViewport::GetViewportOverviewControlsVisibility)
+	];
+
+	// Get the list of requested buffers from the console
+	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.BufferVisualizationOverviewTargets"));
+	FString SelectedMaterialNames = CVar->GetString();
+
+	FBufferVisualizationData& BufferVisualizationData = GetBufferVisualizationData();
+	FString Left, Right;
+	int currentRow = 0;
+	int currentColumn = 0;
+	int elements = 0;
+	// auto size = ActiveViewport->GetSizeXY();
+	//GetViewportClient()->GetViewportDimensions(&ViewportOrigin, &ViewportSize)
+	//const int32 TileWidth = size.X / MaxTilesX;
+	//const int32 TileHeight = size.Y / MaxTilesY;
+	// Extract each material name from the comma separated string
+	while (SelectedMaterialNames.Len() && elements <= MaxTilesX * MaxTilesY)
+	{
+		// Detect last entry in the list
+		if (!SelectedMaterialNames.Split(TEXT(","), &Left, &Right))
+		{
+			Left = SelectedMaterialNames;
+			Right = FString();
+		}
+
+		// Lookup this material from the list that was parsed out of the global ini file
+		Left.TrimStartInline();
+		if (Left.Len() > 0)
+		{
+			FText DisplayName = BufferVisualizationData.GetMaterialDisplayName(FName(Left));
+			FText LabelText = FText::Format(LOCTEXT("OverviewVisualizaationBufferLabel","Create {0} buffer dump"), DisplayName);
+			OverviewGridPanel->AddSlot(currentColumn, currentRow)
+				[
+					SNew(SBox)
+					.HAlign(HAlign_Left)
+					.VAlign(VAlign_Bottom)
+					.Padding(FMargin(5.0f,25.0f))
+					//.WidthOverride(TileWidth)
+					///.HeightOverride(TileHeight)
+					[
+						SNew(SButton)
+						.ClickMethod(EButtonClickMethod::MouseDown)
+						.ContentPadding(FMargin(5.0f, 2.0f))
+						//.HAlign(HAlign_Right)
+						//.VAlign(VAlign_Top)
+						.Text(LabelText)
+						.ButtonStyle(FEditorStyle::Get(), "EditorViewportToolBar.MenuButton")
+						.OnClicked_Lambda([this, Left]()->FReply
+							{
+								OnFloatingButtonClicked();
+								FHighResStandaloneBufferDumpConfig& Config = GetHighResStandaloneBufferDumpConfig();
+
+								if (!GIsHighResStandaloneBufferDump)
+								{
+									Config.ClearSelectedMaterials();
+
+									if (!Config.TargetViewport.Pin().IsValid())
+									{
+										Config.ChangeViewport(ActiveViewport);
+									}
+
+									auto ConfigViewport = Config.TargetViewport.Pin();
+
+									if (ConfigViewport.IsValid())
+									{
+										GVisualizationDumpResolutionX = ConfigViewport->GetSizeXY().X * Config.ResolutionMultiplier;
+										GVisualizationDumpResolutionY = ConfigViewport->GetSizeXY().Y * Config.ResolutionMultiplier;
+										FIntRect ScaledCaptureRegion = Config.UnscaledCaptureRegion;
+
+										if (ScaledCaptureRegion.Area() > 0)
+										{
+											ScaledCaptureRegion.Clip(FIntRect(FIntPoint::ZeroValue, ConfigViewport->GetSizeXY()));
+											ScaledCaptureRegion *= Config.ResolutionMultiplier;
+										}
+
+										Config.CaptureRegion = ScaledCaptureRegion;
+										Config.AddSelectedMaterialName(Left);
+										// Trigger the screenshot on the owning viewport
+										ConfigViewport->TakeHighResGBufferDump();
+									}
+								}
+								return FReply::Handled();
+					})
+					]
+				];
+		}
+		else
+		{
+			// add empty slot
+			OverviewGridPanel->AddSlot(currentColumn, currentRow)
+				[
+					SNew(SBox)
+					//.WidthOverride(TileWidth)
+					//.HeightOverride(TileHeight)
+				];
+		}
+		elements++;
+		currentColumn++;
+		if (currentColumn >= MaxTilesY)
+		{
+			currentColumn = 0;
+			currentRow++;
+		}
+		SelectedMaterialNames = Right;	
+	}
+	
+	ViewportOverlay->AddSlot(SlotIndex)
+		.VAlign(VAlign_Bottom)
+		.HAlign(HAlign_Right)
+		.Padding(5.0f)
+	[
+		SNew(SBox)
+		[
+			SNew(SButton)
+			.ClickMethod(EButtonClickMethod::MouseDown)
+			.ContentPadding(FMargin(5.0f, 2.0f))
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Text(LOCTEXT("CreateBufferDump", "Create G-Buffer dump"))
+			.ToolTipText(LOCTEXT("CreateBufferDump_Tooltip", "Create a dump of a currently selected G-Buffer as a .PNG file"))
+			.ButtonStyle(FEditorStyle::Get(), "EditorViewportToolBar.MenuButton")
+			.OnClicked(this, &SLevelViewport::OnDumpBufferClicked)
+			.Visibility(this, &SLevelViewport::GetBufferDumpButtonVisibility)
+		]
+	];
+	// TODO:: add button for overview
 
 	ViewportOverlay->AddSlot( SlotIndex )
 	.VAlign( VAlign_Bottom )
@@ -406,6 +557,46 @@ TSharedRef<SWidget> SLevelViewport::GenerateLevelMenu() const
 	LevelMenuBuilder.EndSection();
 
 	return LevelMenuBuilder.MakeWidget();
+}
+
+FReply SLevelViewport::OnDumpBufferClicked()
+{
+	OnFloatingButtonClicked();
+	// single name for a visualization mode. Not an overview
+	FName currentVisualizationMode = GetViewportClient()->CurrentBufferVisualizationMode;
+	//FText currentBufferName = GetViewportClient()->GetCurrentBufferVisualizationModeDisplayName();
+	FHighResStandaloneBufferDumpConfig& Config = GetHighResStandaloneBufferDumpConfig();
+	
+	if (!GIsHighResStandaloneBufferDump)
+	{
+		Config.ClearSelectedMaterials();
+
+		if (!Config.TargetViewport.Pin().IsValid())
+		{
+			Config.ChangeViewport(ActiveViewport);
+		}
+
+		auto ConfigViewport = Config.TargetViewport.Pin();
+
+		if (ConfigViewport.IsValid())
+		{
+			GVisualizationDumpResolutionX = ConfigViewport->GetSizeXY().X * Config.ResolutionMultiplier;
+			GVisualizationDumpResolutionY = ConfigViewport->GetSizeXY().Y * Config.ResolutionMultiplier;
+			FIntRect ScaledCaptureRegion = Config.UnscaledCaptureRegion;
+
+			if (ScaledCaptureRegion.Area() > 0)
+			{
+				ScaledCaptureRegion.Clip(FIntRect(FIntPoint::ZeroValue, ConfigViewport->GetSizeXY()));
+				ScaledCaptureRegion *= Config.ResolutionMultiplier;
+			}
+
+			Config.CaptureRegion = ScaledCaptureRegion;
+			Config.AddSelectedMaterialName(currentVisualizationMode.ToString());
+			// Trigger the screenshot on the owning viewport
+			ConfigViewport->TakeHighResGBufferDump();
+		}
+	}
+	return FReply::Handled();
 }
 
 FReply SLevelViewport::OnMenuClicked()
@@ -1406,6 +1597,12 @@ void SLevelViewport::BindOptionCommands( FUICommandList& OutCommandList )
 		);
 
 	OutCommandList.MapAction(
+		ViewportActions.ExportAllVisualizeBufferChannels,
+		FExecuteAction::CreateSP(this, &SLevelViewport::OnExportAllGBufferChannelsData),
+		FCanExecuteAction()
+	);
+
+	OutCommandList.MapAction(
 		ViewportActions.ToggleActorPilotCameraView,
 		FExecuteAction::CreateSP(this, &SLevelViewport::ToggleActorPilotCameraView),
 		FCanExecuteAction(),
@@ -1955,6 +2152,43 @@ bool SLevelViewport::IsPerspectiveViewport() const
 void SLevelViewport::OnTakeHighResScreenshot()
 {
 	HighResScreenshotDialog = SHighResScreenshotDialog::OpenDialog(ActiveViewport, CaptureRegionWidget);
+}
+
+void SLevelViewport::OnExportAllGBufferChannelsData()
+{
+	// extract all possible visualization buffers
+	FText allVisualizationModes = GetBufferVisualizationData().GetAllMaterialNames();
+	FHighResStandaloneBufferDumpConfig& Config = GetHighResStandaloneBufferDumpConfig();
+
+	if (!GIsHighResStandaloneBufferDump)
+	{
+		Config.ClearSelectedMaterials();
+
+		if (!Config.TargetViewport.Pin().IsValid())
+		{
+			Config.ChangeViewport(ActiveViewport);
+		}
+
+		auto ConfigViewport = Config.TargetViewport.Pin();
+
+		if (ConfigViewport.IsValid())
+		{
+			GVisualizationDumpResolutionX = ConfigViewport->GetSizeXY().X * Config.ResolutionMultiplier;
+			GVisualizationDumpResolutionY = ConfigViewport->GetSizeXY().Y * Config.ResolutionMultiplier;
+			FIntRect ScaledCaptureRegion = Config.UnscaledCaptureRegion;
+
+			if (ScaledCaptureRegion.Area() > 0)
+			{
+				ScaledCaptureRegion.Clip(FIntRect(FIntPoint::ZeroValue, ConfigViewport->GetSizeXY()));
+				ScaledCaptureRegion *= Config.ResolutionMultiplier;
+			}
+
+			Config.CaptureRegion = ScaledCaptureRegion;
+			Config.AddSelectedMaterialName(allVisualizationModes.ToString());
+			// Trigger the screenshot on the owning viewport
+			ConfigViewport->TakeHighResGBufferDump();
+		}
+	}
 }
 
 void SLevelViewport::ToggleGameView()
@@ -3828,6 +4062,23 @@ FText SLevelViewport::GetCurrentLevelText( bool bDrawOnlyLabel ) const
 	}
 
 	return CurrentLevelName;
+}
+
+EVisibility SLevelViewport::GetBufferDumpButtonVisibility() const
+{
+	bool viewportCheck = (&GetLevelViewportClient() == GCurrentLevelEditingViewportClient && !IsPlayInEditorViewportActive() && bShowToolbarAndControls);
+	bool visualizeModeCheck = GetViewportClient()->IsViewModeEnabled(VMI_VisualizeBuffer) && // visualize buffer is enabled
+		!GetViewportClient()->GetCurrentBufferVisualizationModeDisplayName().EqualTo(FBufferVisualizationData::GetMaterialDefaultDisplayName()); // the mode IS NOT overview (handled separately)
+	return viewportCheck && visualizeModeCheck ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
+EVisibility SLevelViewport::GetViewportOverviewControlsVisibility() const
+{
+	EVisibility ContentVisibility = OnGetViewportContentVisibility();
+	bool viewportCheck = (&GetLevelViewportClient() == GCurrentLevelEditingViewportClient && !IsPlayInEditorViewportActive() && bShowToolbarAndControls);
+	bool visualizeModeCheck = GetViewportClient()->IsViewModeEnabled(VMI_VisualizeBuffer) && // visualize buffer is enabled
+		GetViewportClient()->GetCurrentBufferVisualizationModeDisplayName().EqualTo(FBufferVisualizationData::GetMaterialDefaultDisplayName()); // the mode IS NOT overview (handled separately)
+	return viewportCheck && visualizeModeCheck ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed;
 }
 
 EVisibility SLevelViewport::GetCurrentLevelTextVisibility() const

@@ -10,6 +10,9 @@ bool IsVisualizeGBufferOverviewEnabled(const FViewInfo& View);
 // Returns whether the gubffer visualization pass needs to dump targets to files.
 bool IsVisualizeGBufferDumpToFileEnabled(const FViewInfo& View);
 
+// Returns whether the gubffer visualization pass needs to dump single target to file.
+bool IsStandaloneVisualizeGBufferDumpToFileEnabled(const FViewInfo& View);
+
 // Returns whether the gbuffer visualization pass needs to dump to a pipe.
 bool IsVisualizeGBufferDumpToPipeEnabled(const FViewInfo& View);
 
@@ -40,6 +43,9 @@ struct FVisualizeGBufferOverviewInputs
 
 	// Dump targets to files on disk.
 	bool bDumpToFile = false;
+
+	// Dump single target to file on disk
+	bool bStandaloneDumpToFile = false;
 
 	// Render an overview of the GBuffer targets.
 	bool bOverview = false;

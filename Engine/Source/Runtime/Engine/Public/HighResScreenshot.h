@@ -73,3 +73,56 @@ struct ENGINE_API FHighResScreenshotConfig
 };
 
 ENGINE_API FHighResScreenshotConfig& GetHighResScreenshotConfig();
+
+struct ENGINE_API FHighResStandaloneBufferDumpConfig
+{
+	static const float MinResolutionMultipler;
+	static const float MaxResolutionMultipler;
+
+	FIntRect UnscaledCaptureRegion;
+	FIntRect CaptureRegion;
+	float ResolutionMultiplier;
+	float ResolutionMultiplierScale;
+	bool bStandaloneDumpBufferVisualizationTargets;
+	TWeakPtr<FSceneViewport> TargetViewport;
+	bool bDisplayCaptureRegion;
+	FString FilenameOverride;
+
+	UMaterial* HighResStandaloneBufferDumpMaterial;
+	UMaterial* HighResStandaloneBufferDumpCaptureRegionMaterial;
+
+	FString SelectedMaterialNames;
+	/** Pointer to the image write queue to use for async image writes */
+	IImageWriteQueue* ImageWriteQueue;
+
+	FHighResStandaloneBufferDumpConfig();
+
+	/** Initialize the Image write queue necessary for asynchronously saving screenshots **/
+	void Init();
+
+	/** Populate the specified task with parameters from the current high-res screenshot request */
+	void PopulateImageTaskParams(FImageWriteTask& InOutTask);
+
+	/** Point the screenshot UI at a different viewport **/
+	void ChangeViewport(TWeakPtr<FSceneViewport> InViewport);
+
+	/** Parse screenshot parameters from the supplied console command line **/
+	bool ParseConsoleCommand(const FString& InCmd, FOutputDevice& Ar);
+
+	FString GetSelectedMaterialNames() const;
+
+	void AddSelectedMaterialName(FString MaterialName);
+
+	void ClearSelectedMaterials();
+
+	/** Configure taking a high res screenshot */
+	bool SetResolution(uint32 ResolutionX, uint32 ResolutionY, float ResolutionScale = 1.0f);
+
+	/** Configure screenshot filename */
+	void SetFilename(FString Filename);
+
+	///** Configure screenshot mask is enabled */
+	//void SetMaskEnabled(bool bShouldMaskBeEnabled);
+};
+
+ENGINE_API FHighResStandaloneBufferDumpConfig& GetHighResStandaloneBufferDumpConfig();

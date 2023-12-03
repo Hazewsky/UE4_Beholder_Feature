@@ -312,6 +312,12 @@ CORE_API void RequestEngineExit(const FString& ReasonString);
 extern CORE_API bool GAreScreenMessagesEnabled;
 extern CORE_API bool GScreenMessagesRestoreState;
 
+// Dmytro start
+extern CORE_API bool GIsHighResStandaloneBufferDump;
+extern CORE_API uint32 GVisualizationDumpResolutionX;
+extern CORE_API uint32 GVisualizationDumpResolutionY;
+// Dmytro end
+
 /* Whether we are dumping screen shots */
 extern CORE_API int32 GIsDumpingMovie;
 extern CORE_API bool GIsHighResScreenshot;

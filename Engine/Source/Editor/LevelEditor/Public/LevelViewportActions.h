@@ -99,6 +99,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	/** Opens the control panel for high resolution screenshots */
 	TSharedPtr< FUICommandInfo > HighResScreenshot;
 
+	/** Creates dumps of all g-buffer data */
+	TSharedPtr< FUICommandInfo > ExportAllVisualizeBufferChannels;
+
 	/** Reset all show flags to default */
 	TSharedPtr< FUICommandInfo > UseDefaultShowFlags;
 

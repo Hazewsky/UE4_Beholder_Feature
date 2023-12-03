@@ -23,6 +23,13 @@ static TAutoConsoleVariable<int32> CVarBufferVisualizationDumpFrames(
 	TEXT("0:off (default)\n")
 	TEXT("1:on"),
 	ECVF_RenderThreadSafe);
+static TAutoConsoleVariable<int32> CVarStandaloneBufferVisualizationDumpsEnabled(
+	TEXT("r.StandaloneBufferVisualizationDumpsEnabled"),
+	1,
+	TEXT("Allows the editor to dump valirous buffer visualization materials regardsless if screenshots or movies dumps are requested or not\n")
+	TEXT("0: off\n")
+	TEXT("1:on (default"),
+	ECVF_RenderThreadSafe);
 
 void FBufferVisualizationData::Initialize()
 {
@@ -138,6 +145,16 @@ UMaterialInterface* FBufferVisualizationData::GetMaterial(FName InMaterialName)
 	{
 		return nullptr;
 	}
+}
+
+FText FBufferVisualizationData::GetAllMaterialNames() const
+{
+	FString resultingString = "";
+	for (auto material : MaterialMap)
+	{
+		resultingString += material.Key.ToString() + ",";
+	}
+	return FText::FromString(resultingString);
 }
 
 FText FBufferVisualizationData::GetMaterialDisplayName(FName InMaterialName) const

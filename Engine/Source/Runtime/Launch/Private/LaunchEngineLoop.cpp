@@ -3611,6 +3611,7 @@ int32 FEngineLoop::PreInitPostStartupScreen(const TCHAR* CmdLine)
 	if (!IsRunningDedicatedServer())
 	{
 		GetHighResScreenshotConfig().Init();
+		GetHighResStandaloneBufferDumpConfig().Init();
 	}
 
 #else // WITH_ENGINE

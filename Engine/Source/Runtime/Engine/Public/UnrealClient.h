@@ -131,10 +131,62 @@ public:
 */
 #define MAX_HITPROXYSIZE 200
 
+DECLARE_MULTICAST_DELEGATE(FOnBufferDumpRequestProcessed);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnBufferDumpCaptured, int32 /*Width*/, int32 /*Height*/, const TArray<FColor>& /*Colors*/);
+struct ENGINE_API FStandaloneBufferDumpRequest
+{
+	/**
+	 * Requests a new screenshot with a specific filename
+	 *
+	 * @param InFilename			The filename to use
+	 * @param bAddFilenameSuffix	Whether an auto-generated unique suffix should be added to the supplied filename
+	 */
+	static void RequestStandaloneBufferDump(const FString& InFilename, bool bAddFilenameSuffix);
+
+	/**
+	 * Resets a buffer dump request
+	 */
+	static void Reset();
+
+	/**
+	 * @return The filename of the next screenshot
+	 */
+	static const FString& GetFilename() { return Filename; }
+
+	/**
+	 * @return True if a screenshot is requested
+	 */
+	static bool IsStandaloneBufferDumpRequested() { return bIsStandaloneBufferDumpRequested; }
+
+	/**
+	 * Creates a new buffer dump filename from the passed in filename template
+	 */
+	static void CreateViewportStandaloneBufferDumpFilename(FString& InOutFilename);
+
+	///**
+	// * Access a temporary color array for storing the pixel colors for the highres screenshot mask
+	// */
+	//static TArray<FColor>* GetHighresScreenshotMaskColorArray();
+
+	static FOnBufferDumpRequestProcessed& OnBufferDumpRequestProcessed()
+	{
+		return BufferDumpProcessedDelegate;
+	}
+
+	static FOnBufferDumpCaptured& OnBufferDumpCaptured()
+	{
+		return BufferDumpCapturedDelegate;
+	}
+private:
+	static FOnBufferDumpRequestProcessed BufferDumpProcessedDelegate;
+	static FOnBufferDumpCaptured BufferDumpCapturedDelegate;
+	static bool bIsStandaloneBufferDumpRequested;
+	static FString NextBufferDumpName;
+	static FString Filename;
+};
+
 DECLARE_MULTICAST_DELEGATE(FOnScreenshotRequestProcessed);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnScreenshotCaptured, int32 /*Width*/, int32 /*Height*/, const TArray<FColor>& /*Colors*/);
-
-
 struct ENGINE_API FScreenshotRequest
 {
 	/**
@@ -600,6 +652,16 @@ public:
   	 **/
 	ENGINE_API bool TakeHighResScreenShot();
 
+	/** Trigger a high res buffer dump of a specific visualization mode. Returns true if the dump can be taken, and false if it can't. The dump
+	  * can fail if the requested multiplier makes the screen too big for the GPU to cope with
+	 **/
+	ENGINE_API bool TakeHighResGBufferDump();
+
+	/** Trigger a high res buffer dump of all visualization modes available in the editor. Returns true if the dump can be taken, and false if it can't. The dump
+	  * can fail if the requested multiplier makes the screen too big for the GPU to cope with
+	 **/
+	ENGINE_API bool TakeHighResAllGBuffersDump();
+
 	/** Should return true, if stereo rendering is allowed in this viewport */
 	virtual bool IsStereoRenderingAllowed() const { return false; }
 
@@ -618,6 +680,10 @@ protected:
 	 * @param bDestroyed - True if the viewport has been destroyed.
 	 */
 	ENGINE_API virtual void UpdateViewportRHI(bool bDestroyed, uint32 NewSizeX, uint32 NewSizeY, EWindowMode::Type NewWindowMode, EPixelFormat PreferredPixelFormat);
+	/**
+	 * Take a high-resolution buffer dump and save to disk.
+	 */
+	void HighResBufferDump();
 
 	/**
 	 * Take a high-resolution screenshot and save to disk.
@@ -730,6 +796,8 @@ protected:
 
 	/** Triggers the taking of a high res screen shot for this viewport. */
 	bool bTakeHighResScreenShot;
+	/** Triggers the taking of a high res buffer dump for this viewport */
+	bool bTakeHighResBufferDump;
 	//~ Begin FRenderResource Interface.
 	ENGINE_API virtual void InitDynamicRHI() override;
 	ENGINE_API virtual void ReleaseDynamicRHI() override;
@@ -744,6 +812,7 @@ extern ENGINE_API bool IsAltDown(FViewport* Viewport);
 
 extern ENGINE_API bool GetViewportScreenShot(FViewport* Viewport, TArray<FColor>& Bitmap, const FIntRect& ViewRect = FIntRect());
 extern ENGINE_API bool GetHighResScreenShotInput(const TCHAR* Cmd, FOutputDevice& Ar, uint32& OutXRes, uint32& OutYRes, float& OutResMult, FIntRect& OutCaptureRegion, bool& OutShouldEnableMask, bool& OutDumpBufferVisualizationTargets, bool& OutCaptureHDR, FString& OutFilenameOverride, bool& OutUseDateTimeAsFileName);
+extern ENGINE_API bool GetHighResStandaloneBufferDumpInput(const TCHAR* Cmd, FOutputDevice& Ar, uint32& OutXRes, uint32& OutYRes, float& OutResMult, FIntRect& OutCaptureRegion, bool& OutDumpBufferVisualizationTargets, FString& OutFilenameOverride);
 
 struct FInputKeyEventArgs
 {
@@ -799,6 +868,7 @@ public:
 	virtual void RequestInvalidateHitProxy(FViewport* Viewport) { Viewport->InvalidateHitProxy(); }
 	virtual void Draw(FViewport* Viewport,FCanvas* Canvas) {}
 	virtual bool ProcessScreenShots(FViewport* Viewport) { return false; }
+	virtual bool ProcessBufferDumps(FViewport* Viewport) { return false; }
 	virtual UWorld* GetWorld() const { return NULL; }
 	virtual struct FEngineShowFlags* GetEngineShowFlags() { return NULL; }
 

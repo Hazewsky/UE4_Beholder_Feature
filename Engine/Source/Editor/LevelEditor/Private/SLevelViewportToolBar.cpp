@@ -751,6 +751,7 @@ void SLevelViewportToolBar::FillOptionsMenu(UToolMenu* Menu)
 			}
 
 			Section.AddMenuEntry(LevelViewportActions.HighResScreenshot);
+			Section.AddMenuEntry(LevelViewportActions.ExportAllVisualizeBufferChannels);
 		}
 
 

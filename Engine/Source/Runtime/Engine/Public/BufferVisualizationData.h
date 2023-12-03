@@ -23,6 +23,9 @@ public:
 	/** Get a named material from the available material map **/
 	ENGINE_API UMaterialInterface* GetMaterial(FName InMaterialName);
 
+	/** Get all material names for the available material map **/
+	ENGINE_API FText GetAllMaterialNames() const;
+
 	/** Get the display name of a named material from the available material map **/
 	ENGINE_API FText GetMaterialDisplayName(FName InMaterialName) const;
 

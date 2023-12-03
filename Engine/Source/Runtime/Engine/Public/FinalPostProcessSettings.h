@@ -24,6 +24,7 @@ public:
 	, HighResScreenshotMaskMaterial(NULL)
 	, HighResScreenshotCaptureRegionMaterial(NULL)
 	, bBufferVisualizationDumpRequired(false)
+	, bStandaloneBufferVisualizationDumpRequired(false)
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	, bBufferVisualizationOverviewTargetIsSelected(false)
 #endif
@@ -189,9 +190,15 @@ public:
 	// Material to use for rendering the high resolution screenshot capture region. Post processing only draws the region if this material is set.
 	UMaterialInstanceDynamic* HighResScreenshotCaptureRegionMaterial;
 
+	// Material to use for rendering high res screenshot with mask. Post process expects this material to be set all the time.
+	UMaterialInterface* HighResStandaloneBufferDumpMaterial;
+
 	// Current buffer visualization dumping settings
 	bool bBufferVisualizationDumpRequired;
 	FString BufferVisualizationDumpBaseFilename;
+	// extra:
+	bool bStandaloneBufferVisualizationDumpRequired;
+	FString StandaloneBufferVisualizationDumpBaseFilename;
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	// Optional selected buffer in the buffer visualization overview

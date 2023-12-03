@@ -26,6 +26,7 @@
 #include "HighResScreenshot.h"
 #include "Slate/SceneViewport.h"
 #include "RenderUtils.h"
+#include <Runtime/Core/Public/Misc/FileHelper.h>
 
 DEFINE_LOG_CATEGORY(LogBufferVisualization);
 DEFINE_LOG_CATEGORY(LogMultiView);
@@ -2150,6 +2151,12 @@ void FSceneView::EndFinalPostprocessSettings(const FSceneViewInitOptions& ViewIn
 			}
 		}
 	}
+
+	// Pass highres standalone buffer dump materials through post process settings
+	FHighResStandaloneBufferDumpConfig& BufferConfig = GetHighResStandaloneBufferDumpConfig();
+
+	// Pass highres screenshot materials through post process settings
+	FinalPostProcessSettings.HighResStandaloneBufferDumpMaterial = BufferConfig.HighResStandaloneBufferDumpMaterial;
 #endif // WITH_EDITOR
 
 	if (Family->EngineShowFlags.ScreenPercentage)
@@ -2167,11 +2174,67 @@ void FSceneView::EndFinalPostprocessSettings(const FSceneViewInitOptions& ViewIn
 void FSceneView::ConfigureBufferVisualizationSettings()
 {
 	bool bBufferDumpingRequired = (FScreenshotRequest::IsScreenshotRequested() || GIsHighResScreenshot || GIsDumpingMovie);
+	bool bStandaloneBufferDumpingRequired = GIsHighResStandaloneBufferDump;
+	
 	bool bVisualizationRequired = Family->EngineShowFlags.VisualizeBuffer;
+	if (bStandaloneBufferDumpingRequired)
+	{
+		FinalPostProcessSettings.bBufferVisualizationDumpRequired = false;
+		FinalPostProcessSettings.bStandaloneBufferVisualizationDumpRequired = bStandaloneBufferDumpingRequired;
+		FinalPostProcessSettings.BufferVisualizationOverviewMaterials.Empty();
 
-	if (bVisualizationRequired || bBufferDumpingRequired)
+		FinalPostProcessSettings.BufferVisualizationDumpBaseFilename = FPaths::GetBaseFilename(FStandaloneBufferDumpRequest::GetFilename(), false);
+
+		FHighResStandaloneBufferDumpConfig& StandaloneBufferDumpConfig = GetHighResStandaloneBufferDumpConfig();
+		FString SelectedMaterialNames = StandaloneBufferDumpConfig.GetSelectedMaterialNames();
+
+		FBufferVisualizationData& BufferVisualizationData = GetBufferVisualizationData();
+
+		if (BufferVisualizationData.IsDifferentToCurrentOverviewMaterialNames(SelectedMaterialNames))
+		{
+			FString Left, Right;
+
+			// Update our record of the list of materials we've been asked to display
+			BufferVisualizationData.SetCurrentOverviewMaterialNames(SelectedMaterialNames);
+			BufferVisualizationData.GetOverviewMaterials().Empty();
+
+			// Extract each material name from the comma separated string
+			while (SelectedMaterialNames.Len())
+			{
+				// Detect last entry in the list
+				if (!SelectedMaterialNames.Split(TEXT(","), &Left, &Right))
+				{
+					Left = SelectedMaterialNames;
+					Right = FString();
+				}
+
+				// Lookup this material from the list that was parsed out of the global ini file
+				Left.TrimStartInline();
+				UMaterialInterface* Material = BufferVisualizationData.GetMaterial(*Left);
+
+				if (Material == NULL && Left.Len() > 0)
+				{
+					UE_LOG(LogBufferVisualization, Warning, TEXT("Unknown material '%s'"), *Left);
+				}
+
+				// Add this material into the material list in the post processing settings so that the render thread
+				// can pick them up and draw them into the on-screen tiles
+				BufferVisualizationData.GetOverviewMaterials().Add(Material);
+
+				SelectedMaterialNames = Right;
+			}
+		}
+
+		// Copy current material list into settings material list
+		for (TArray<UMaterialInterface*>::TConstIterator It = BufferVisualizationData.GetOverviewMaterials().CreateConstIterator(); It; ++It)
+		{
+			FinalPostProcessSettings.BufferVisualizationOverviewMaterials.Add(*It);
+		}
+	}
+	else if (bVisualizationRequired || bBufferDumpingRequired)
 	{
 		FinalPostProcessSettings.bBufferVisualizationDumpRequired = bBufferDumpingRequired;
+		FinalPostProcessSettings.bStandaloneBufferVisualizationDumpRequired = false;
 		FinalPostProcessSettings.BufferVisualizationOverviewMaterials.Empty();
 
 		if (bBufferDumpingRequired)

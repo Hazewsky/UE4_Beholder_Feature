@@ -196,3 +196,137 @@ void FHighResScreenshotConfig::SetMaskEnabled(bool bShouldMaskBeEnabled)
 {
 	bMaskEnabled = bShouldMaskBeEnabled;
 }
+// ----------------------- BUFFER DUMP ---------------------------------------
+
+FHighResStandaloneBufferDumpConfig& GetHighResStandaloneBufferDumpConfig()
+{
+	static FHighResStandaloneBufferDumpConfig Instance;
+	return Instance;
+}
+
+const float FHighResStandaloneBufferDumpConfig::MinResolutionMultipler = 1.0f;
+const float FHighResStandaloneBufferDumpConfig::MaxResolutionMultipler = 10.0f;
+
+FHighResStandaloneBufferDumpConfig::FHighResStandaloneBufferDumpConfig()
+	: ResolutionMultiplier(FHighResStandaloneBufferDumpConfig::MinResolutionMultipler)
+	, ResolutionMultiplierScale(0.0f)
+	//, bMaskEnabled(false)
+	//, bDateTimeBasedNaming(true)
+	, bStandaloneDumpBufferVisualizationTargets(false)
+	, SelectedMaterialNames(FString(TEXT("")))
+{
+	ChangeViewport(TWeakPtr<FSceneViewport>());
+	//SetHDRCapture(false);
+	//SetForce128BitRendering(false);
+}
+
+void FHighResStandaloneBufferDumpConfig::Init()
+{
+	ImageWriteQueue = &FModuleManager::LoadModuleChecked<IImageWriteQueueModule>("ImageWriteQueue").GetWriteQueue();
+
+#if WITH_EDITOR
+	// same as for high res screenshot
+	HighResStandaloneBufferDumpMaterial = LoadObject<UMaterial>(NULL, TEXT("/Engine/EngineMaterials/HighResScreenshot.HighResScreenshot"));
+	HighResStandaloneBufferDumpCaptureRegionMaterial = LoadObject<UMaterial>(NULL, TEXT("/Engine/EngineMaterials/HighResScreenshotCaptureRegion.HighResScreenshotCaptureRegion"));
+
+	if (HighResStandaloneBufferDumpMaterial)
+	{
+		HighResStandaloneBufferDumpMaterial->AddToRoot();
+	}
+	if (HighResStandaloneBufferDumpCaptureRegionMaterial)
+	{
+		HighResStandaloneBufferDumpCaptureRegionMaterial->AddToRoot();
+	}
+#endif
+}
+
+void FHighResStandaloneBufferDumpConfig::PopulateImageTaskParams(FImageWriteTask& InOutTask)
+{
+	InOutTask.Format = EImageFormat::PNG;
+	InOutTask.CompressionQuality = (int32)EImageCompressionQuality::Default;
+}
+
+void FHighResStandaloneBufferDumpConfig::ChangeViewport(TWeakPtr<FSceneViewport> InViewport)
+{
+	if (FSceneViewport* Viewport = TargetViewport.Pin().Get())
+	{
+		// Force an invalidate on the old viewport to make sure we clear away the capture region effect
+		Viewport->Invalidate();
+	}
+
+	UnscaledCaptureRegion = FIntRect(0, 0, 0, 0);
+	CaptureRegion = UnscaledCaptureRegion;
+	ResolutionMultiplier = FHighResStandaloneBufferDumpConfig::MinResolutionMultipler;
+	ResolutionMultiplierScale = 0.0f;
+	TargetViewport = InViewport;
+}
+
+bool FHighResStandaloneBufferDumpConfig::ParseConsoleCommand(const FString& InCmd, FOutputDevice& Ar)
+{
+	GVisualizationDumpResolutionX = 0;
+	GVisualizationDumpResolutionY = 0;
+	ResolutionMultiplier = FHighResStandaloneBufferDumpConfig::MinResolutionMultipler;
+	ResolutionMultiplierScale = 0.0f;
+
+	if (GetHighResStandaloneBufferDumpInput(*InCmd, Ar, GVisualizationDumpResolutionX, GVisualizationDumpResolutionY, ResolutionMultiplier, CaptureRegion, bStandaloneDumpBufferVisualizationTargets, FilenameOverride))
+	{
+		GVisualizationDumpResolutionX *= ResolutionMultiplier;
+		GVisualizationDumpResolutionY *= ResolutionMultiplier;
+
+		uint32 MaxTextureDimension = GetMax2DTextureDimension();
+
+		// Check that we can actually create a destination texture of this size
+		if (GVisualizationDumpResolutionX > MaxTextureDimension || GScreenshotResolutionY > MaxTextureDimension)
+		{
+			Ar.Logf(TEXT("Error: Buffer Dump size exceeds the maximum allowed texture size (%d x %d)"), GetMax2DTextureDimension(), GetMax2DTextureDimension());
+			return false;
+		}
+
+		GIsHighResStandaloneBufferDump = true;
+
+		return true;
+	}
+
+	return false;
+}
+
+bool FHighResStandaloneBufferDumpConfig::SetResolution(uint32 ResolutionX, uint32 ResolutionY, float ResolutionScale)
+{
+	if ((ResolutionX * ResolutionScale) > GetMax2DTextureDimension() || (ResolutionY * ResolutionScale) > GetMax2DTextureDimension())
+	{
+		// TODO LOG
+		//Ar.Logf(TEXT("Error: Screenshot size exceeds the maximum allowed texture size (%d x %d)"), GetMax2DTextureDimension(), GetMax2DTextureDimension());
+		return false;
+	}
+
+	UnscaledCaptureRegion = FIntRect(0, 0, 0, 0);
+	CaptureRegion = UnscaledCaptureRegion;
+	//bMaskEnabled = false;
+
+	GVisualizationDumpResolutionX = (ResolutionX * ResolutionScale);
+	GVisualizationDumpResolutionY = (ResolutionY * ResolutionScale);
+	GIsHighResStandaloneBufferDump = true;
+
+	return true;
+}
+
+void FHighResStandaloneBufferDumpConfig::SetFilename(FString Filename)
+{
+	FilenameOverride = Filename;
+}
+
+FString FHighResStandaloneBufferDumpConfig::GetSelectedMaterialNames() const
+{
+	return SelectedMaterialNames;
+}
+
+void FHighResStandaloneBufferDumpConfig::AddSelectedMaterialName(FString MaterialName)
+{
+	
+	SelectedMaterialNames += MaterialName + ",";
+}
+
+void FHighResStandaloneBufferDumpConfig::ClearSelectedMaterials()
+{
+	SelectedMaterialNames.Reset();
+}

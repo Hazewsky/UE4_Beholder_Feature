@@ -66,6 +66,7 @@ public:
 	void ConstructViewportOverlayContent();
 
 	TSharedRef<SWidget> GenerateLevelMenu() const;
+	FReply OnDumpBufferClicked();
 	FReply OnMenuClicked();
 
 	/**
@@ -296,6 +297,9 @@ public:
 	/** Called to get the level text */
 	FText GetCurrentLevelText( bool bDrawOnlyLabel ) const;
 
+	virtual EVisibility GetBufferDumpButtonVisibility() const;
+	virtual EVisibility GetViewportOverviewControlsVisibility() const;
+
 	/** Called to get the screen percentage preview text */
 	FText GetCurrentScreenPercentageText(bool bDrawOnlyLabel) const;
 
@@ -472,6 +476,8 @@ private:
 	 * Called to bring up the screenshot UI
 	 */
 	void OnTakeHighResScreenshot();
+
+	void OnExportAllGBufferChannelsData();
 
 	/**
 	 * Called to check currently selected editor viewport is a perspective one
@@ -898,6 +904,8 @@ private:
 	bool bShowFullToolbar;
 
 	TSharedPtr<class SMenuAnchor> LevelMenuAnchor;
+	TSharedPtr<class SGridPanel> OverviewGridPanel;
+	const int OVERVIEW_GRID_NUM_COLUMNS = 6;
 
 protected:
 	void LockActorInternal(AActor* NewActorToLock);
