@@ -1,0 +1,41 @@
+version: 1.0.{build}
+
+image: Visual Studio 2017
+platform: x64
+configuration: Release
+
+clone_folder: c:\projects\DirectXShaderCompiler
+
+environment:
+  HLSL_SRC_DIR: c:\projects\DirectXShaderCompiler
+  HLSL_BLD_DIR: c:\projects\DirectXShaderCompiler\build
+  ARTIFACTS_ZIP_NAME: dxc-artifacts.zip
+
+install:
+- cmd: git submodule update --init
+- cmd: set PATH=C:\ninja;C:\Python36;%PATH%
+
+before_build:
+- cmd: call utils\hct\hctstart %HLSL_SRC_DIR% %HLSL_BLD_DIR%
+
+build_script:
+- cmd: call utils\hct\hctbuild -%PLATFORM% -%CONFIGURATION% -spirvtest
+
+test_script:
+- ps:  utils\appveyor\appveyor_test.ps1
+- cmd: call utils\hct\hcttest -rel spirv_only
+
+after_test:
+- cmd: cd build\%CONFIGURATION%
+- cmd: echo %APPVEYOR_REPO_COMMIT% > GIT-COMMIT.txt
+- cmd: xcopy "%HLSL_SRC_DIR%\include\dxc" include\dxc /s /i /y
+- cmd: 7z a %ARTIFACTS_ZIP_NAME% include lib\d*.lib bin\d*.exe bin\d*.dll bin\d*.pdb bin\HLSLHost.exe GIT-COMMIT.txt
+
+artifacts:
+- path: build\$(configuration)\$(ARTIFACTS_ZIP_NAME)
+
+notifications:
+- provider: GitHubPullRequest
+  on_build_success: true
+  on_build_failure: true
+  on_build_status_changed: true
