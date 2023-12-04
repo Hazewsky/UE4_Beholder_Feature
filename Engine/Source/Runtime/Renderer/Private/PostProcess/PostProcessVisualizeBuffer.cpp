@@ -297,7 +297,7 @@ void AddStandaloneDumpToFilePass(FRDGBuilder& GraphBuilder, FScreenPassTexture I
 					uint8 R = ColorData[Index].R;
 					uint8 G = ColorData[Index].G;
 					uint8 B = ColorData[Index].B;
-					FString string = FString::Printf(TEXT("%d%d,%d,%d,%d\n"), Index, R, G, B, A);
+					FString string = FString::Printf(TEXT("%d,%d,%d,%d,%d\n"), Index, R, G, B, A);
 					FinalStringCSV += string;
 				}
 			}
