@@ -280,7 +280,8 @@ void AddPostProcessingPasses(FRDGBuilder& GraphBuilder, const FViewInfo& View, i
 	const bool bViewFamilyOutputInHDR = GRHISupportsHDROutput && IsHDREnabled();
 	const bool bVisualizeGBufferOverview = IsVisualizeGBufferOverviewEnabled(View);
 	const bool bVisualizeGBufferDumpToFile = IsVisualizeGBufferDumpToFileEnabled(View);
-	const bool bVisualizeGBufferDumpToPIpe = IsVisualizeGBufferDumpToPipeEnabled(View);
+	const bool bStandaloneVisualizeGBufferDumpToFile = IsStandaloneVisualizeGBufferDumpToFileEnabled(View);
+	const bool bVisualizeGBufferDumpToPipe = IsVisualizeGBufferDumpToPipeEnabled(View);
 	const bool bOutputInHDR = IsPostProcessingOutputInHDR();
 
 	const FPaniniProjectionConfig PaniniConfig(View);
@@ -363,7 +364,10 @@ void AddPostProcessingPasses(FRDGBuilder& GraphBuilder, const FViewInfo& View, i
 	PassSequence.SetEnabled(EPass::VisualizeShadingModels, EngineShowFlags.VisualizeShadingModels);
 	PassSequence.SetEnabled(EPass::VisualizeGBufferHints, EngineShowFlags.GBufferHints);
 	PassSequence.SetEnabled(EPass::VisualizeSubsurface, EngineShowFlags.VisualizeSSS);
-	PassSequence.SetEnabled(EPass::VisualizeGBufferOverview, bVisualizeGBufferOverview || bVisualizeGBufferDumpToFile || bVisualizeGBufferDumpToPIpe);
+	PassSequence.SetEnabled(EPass::VisualizeGBufferOverview, bVisualizeGBufferOverview ||
+		bVisualizeGBufferDumpToFile ||
+		bStandaloneVisualizeGBufferDumpToFile ||
+		bVisualizeGBufferDumpToPipe);
 	PassSequence.SetEnabled(EPass::VisualizeHDR, EngineShowFlags.VisualizeHDR);
 #if WITH_EDITOR
 	PassSequence.SetEnabled(EPass::PixelInspector, View.bUsePixelInspector);
@@ -957,6 +961,7 @@ void AddPostProcessingPasses(FRDGBuilder& GraphBuilder, const FViewInfo& View, i
 		PassInputs.SceneTextures = GetSceneTextureShaderParameters(Inputs.SceneTextures);
 		PassInputs.bOverview = bVisualizeGBufferOverview;
 		PassInputs.bDumpToFile = bVisualizeGBufferDumpToFile;
+		PassInputs.bStandaloneDumpToFile = bStandaloneVisualizeGBufferDumpToFile;
 		PassInputs.bOutputInHDR = bOutputInHDR;
 
 		SceneColor = AddVisualizeGBufferOverviewPass(GraphBuilder, View, PassInputs);
